@@ -330,14 +330,21 @@ class StructureManagerWidget(QWidget):
             if "state" not in data[comp_name][data_index]:
                 data[comp_name][data_index]["state"] = {}
             data[comp_name][data_index]["state"]["in_trash"] = should_trash
+            self.data = data  # keep cached copy in sync for _update_summary
 
             self.controller.engine.stage_update(chunk_name=self.chunk_name, data=data)
             self.save_current_state()
-            self.on_refresh()
 
-            main_view = self.window().findChild(QWidget, "StructureTabView")
-            if main_view and hasattr(main_view, "on_refresh"):
-                main_view.on_refresh()
+            def _do_refresh():
+                table = self.sections.get(comp_name)
+                if table:
+                    table.remove_row_by_index(data_index)
+                self._update_summary()
+                main_view = self.window().findChild(QWidget, "StructureTabView")
+                if main_view:
+                    main_view.update_trash_count()
+
+            QTimer.singleShot(0, _do_refresh)
 
     def add_new_component(self):
         name, ok = QInputDialog.getText(self, "New Component", "Enter Component Name:")

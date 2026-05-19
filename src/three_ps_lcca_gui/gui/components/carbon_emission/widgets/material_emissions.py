@@ -775,6 +775,98 @@ class MaterialEmissions(QWidget):
         )
         self.misc_lbl.setText(f"Misc: {fmt_comma(cat_totals.get('Misc', 0))}")
 
+    def _find_row_in_overlay(self, overlay, chunk_id, comp_name, idx) -> int:
+        for row in range(overlay.rowCount()):
+            cell = overlay.item(row, 0)
+            if cell:
+                d = cell.data(Qt.UserRole)
+                if (d and d.get("chunk_id") == chunk_id
+                        and d.get("comp_name") == comp_name
+                        and d.get("idx") == idx):
+                    return row
+        return -1
+
+    def _refresh_summary_only(self):
+        result = self._compute()
+        self._update_summary(
+            result["total_carbon"],
+            result["included_count"],
+            result["total_count"],
+            result["cat_totals"],
+        )
+
+    def _do_move_row(self, src_row: int, include: bool, item_data: dict,
+                     category: str, chunk_id: str, comp_name: str, idx: int):
+        """Move one row between tables. include=True: excluded→included."""
+
+        def _ri(text):
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            return it
+
+        src = self.excluded_table if include else self.included_table
+        src.removeRow(src_row)
+        src._frozen_overlay.removeRow(src_row)
+        src.update_height()
+
+        v = item_data.get("values", {})
+        carbon_denom = v.get("carbon_unit", "").split("/")[-1] if "/" in v.get("carbon_unit", "") else ""
+        analysis = _cached_analysis(v.get("unit", ""), carbon_denom, _cf_value(v))
+        _cf_raw = v.get("conversion_factor", "not_available")
+
+        if include:
+            t = self.included_table
+            carbon = calc_carbon(item_data)
+            row = t.rowCount()
+            t.insertRow(row)
+            t.setItem(row, 0, QTableWidgetItem(category))
+            t.setItem(row, 1, QTableWidgetItem(v.get("material_name", "")))
+            t.setItem(row, 2, _ri(fmt(v.get("quantity", 0))))
+            t.setItem(row, 3, QTableWidgetItem(_fmt_unit(v.get("unit", ""))))
+            t.setItem(row, 4, _ri(fmt(_cf_raw) if _cf_raw not in _NA else "-"))
+            t.setItem(row, 5, _ri(fmt(v.get("carbon_emission", 0))))
+            t.setItem(row, 6, QTableWidgetItem(_fmt_carbon_unit(v.get("carbon_unit", ""))))
+            carbon_item = QTableWidgetItem(fmt(carbon))
+            carbon_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            t.setItem(row, 7, carbon_item)
+            warnings = []
+            if float(v.get("quantity", 0) or 0) == 0:
+                warnings.append("Zero Qty")
+            if analysis["is_suspicious"]:
+                warnings.append("⚠️ Conversion Factor seems incorrect.")
+            t.setItem(row, 8, QTableWidgetItem(", ".join(warnings)))
+            row_data = {"btns": ["edit", "exclude"], "chunk_id": chunk_id,
+                        "comp_name": comp_name, "idx": idx, "item": item_data}
+            action_item = QTableWidgetItem()
+            action_item.setData(Qt.UserRole, row_data)
+            action_item.setFlags(Qt.ItemIsEnabled)
+            t.setItem(row, 9, action_item)
+            t.setItem(row, 10, QTableWidgetItem())
+            t._frozen_overlay.add_row(row_data)
+        else:
+            t = self.excluded_table
+            row = t.rowCount()
+            t.insertRow(row)
+            t.setItem(row, 0, QTableWidgetItem(category))
+            t.setItem(row, 1, QTableWidgetItem(v.get("material_name", "")))
+            t.setItem(row, 2, _ri(fmt(v.get("quantity", 0))))
+            t.setItem(row, 3, QTableWidgetItem(_fmt_unit(v.get("unit", ""))))
+            t.setItem(row, 4, _ri(fmt(_cf_raw) if _cf_raw not in _NA else "-"))
+            t.setItem(row, 5, _ri(fmt(v.get("carbon_emission", 0))))
+            t.setItem(row, 6, QTableWidgetItem(_fmt_carbon_unit(v.get("carbon_unit", ""))))
+            t.setItem(row, 7, QTableWidgetItem("User Excluded"))
+            row_data = {"btns": ["edit", "include"], "chunk_id": chunk_id,
+                        "comp_name": comp_name, "idx": idx, "item": item_data}
+            action_item = QTableWidgetItem()
+            action_item.setData(Qt.UserRole, row_data)
+            action_item.setFlags(Qt.ItemIsEnabled)
+            t.setItem(row, 8, action_item)
+            t.setItem(row, 9, QTableWidgetItem())
+            t._frozen_overlay.add_row(row_data)
+
+        t.update_height()
+        self._refresh_summary_only()
+
     def _toggle_inclusion(
         self, chunk_id: str, comp_name: str, data_index: int, include: bool
     ):
@@ -785,7 +877,28 @@ class MaterialEmissions(QWidget):
             ] = include
             self.controller.engine.stage_update(chunk_name=chunk_id, data=data)
             self._mark_dirty()
-            QTimer.singleShot(0, self.on_refresh)
+
+            src_overlay = (
+                self.included_table._frozen_overlay if not include
+                else self.excluded_table._frozen_overlay
+            )
+            src_row = self._find_row_in_overlay(
+                src_overlay, chunk_id, comp_name, data_index
+            )
+
+            if src_row >= 0:
+                src_main = self.included_table if not include else self.excluded_table
+                category = (src_main.item(src_row, 0).text()
+                            if src_main.item(src_row, 0) else "")
+                item_snap = src_overlay.item(src_row, 0).data(Qt.UserRole)["item"]
+
+                def _do(r=src_row, inc=include, idata=item_snap, cat=category,
+                        ci=chunk_id, cn=comp_name, di=data_index):
+                    self._do_move_row(r, inc, idata, cat, ci, cn, di)
+
+                QTimer.singleShot(0, _do)
+            else:
+                QTimer.singleShot(0, self.on_refresh)
 
     def _open_emission_edit(
         self, chunk_id: str, comp_name: str, data_index: int, item: dict

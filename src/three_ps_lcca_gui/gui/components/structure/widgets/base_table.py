@@ -362,6 +362,95 @@ class StructureTableWidget(TooltipTableMixin, QTableWidget):
         self.blockSignals(False)
         self.update_height()
 
+    def insert_row_at_position(self, item_data: dict, original_index: int):
+        """Insert a row at the correct sorted position (by original_index)."""
+        pos = self.rowCount()
+        for r in range(self.rowCount()):
+            cell = self.item(r, 6)
+            if cell:
+                idx = cell.data(Qt.UserRole)
+                if isinstance(idx, int) and idx > original_index:
+                    pos = r
+                    break
+
+        self.blockSignals(True)
+        self.insertRow(pos)
+        self.setRowHeight(pos, _ROW_H)
+
+        v = item_data.get("values", {})
+
+        self.setItem(pos, 0, QTableWidgetItem(v.get("material_name", "New Item")))
+
+        rate_item = QTableWidgetItem(fmt_comma(v.get("rate", 0)))
+        rate_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setItem(pos, 1, rate_item)
+
+        qty_item = QTableWidgetItem(fmt(v.get("quantity", 0)))
+        qty_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setItem(pos, 2, qty_item)
+
+        unit = v.get("unit", "")
+        unit = UNIT_DISPLAY.get(unit.lower(), unit) if unit else unit
+        self.setItem(pos, 3, QTableWidgetItem(unit))
+
+        self.setItem(pos, 4, QTableWidgetItem(v.get("rate_source", "Manual")))
+
+        try:
+            rate = float(v.get("rate", 0) or 0)
+            qty = float(v.get("quantity", 0) or 0)
+            total = rate * qty
+        except (ValueError, TypeError):
+            total = 0.0
+
+        total_item = QTableWidgetItem(fmt_comma(total))
+        total_item.setFlags(total_item.flags() & ~Qt.ItemIsEditable)
+        total_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setItem(pos, 5, total_item)
+
+        action_item = QTableWidgetItem()
+        action_item.setData(Qt.UserRole, original_index)
+        action_item.setFlags(Qt.ItemIsEnabled)
+        self.setItem(pos, 6, action_item)
+
+        self.setItem(pos, 7, QTableWidgetItem())
+
+        self.blockSignals(False)
+
+        frozen_item = QTableWidgetItem()
+        frozen_item.setData(Qt.UserRole, original_index)
+        frozen_item.setFlags(Qt.ItemIsEnabled)
+        self._frozen_col.insertRow(pos)
+        self._frozen_col.setRowHeight(pos, _ROW_H)
+        self._frozen_col.setItem(pos, 0, frozen_item)
+
+        self.update_height()
+
+    def remove_row_by_index(self, original_index: int, reindex: bool = False):
+        """Remove the row whose col-6 UserRole matches original_index.
+
+        reindex=True: decrement stored indices > original_index after removal
+        (needed after permanent delete, which shifts the data array).
+        """
+        found = None
+        for row in range(self.rowCount()):
+            item = self.item(row, 6)
+            if item and item.data(Qt.UserRole) == original_index:
+                found = row
+                break
+        if found is None:
+            return
+        self.removeRow(found)
+        self._frozen_col.removeRow(found)
+        if reindex:
+            for row in range(self.rowCount()):
+                for tbl, col in ((self, 6), (self._frozen_col, 0)):
+                    cell = tbl.item(row, col)
+                    if cell:
+                        idx = cell.data(Qt.UserRole)
+                        if isinstance(idx, int) and idx > original_index:
+                            cell.setData(Qt.UserRole, idx - 1)
+        self.update_height()
+
     # ------------------------------------------------------------------
     # Freeze / unfreeze
     # ------------------------------------------------------------------

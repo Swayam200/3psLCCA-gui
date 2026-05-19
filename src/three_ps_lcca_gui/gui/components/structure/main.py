@@ -183,7 +183,6 @@ class StructureTabView(QWidget):
         else:
             # Returning to Work View
             self.content_stack.setCurrentIndex(0)
-            self.on_refresh()
         
         self.update_trash_count()
 

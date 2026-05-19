@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QMessageBox,
 )
+from PySide6.QtCore import QTimer
 from three_ps_lcca_gui.gui.themes import get_token
 from .base_table import StructureTableWidget
 
@@ -20,6 +21,8 @@ class TrashTabWidget(QWidget):
     def __init__(self, controller=None):
         super().__init__()
         self.controller = controller
+        # (chunk_id, comp_name) → StructureTableWidget; populated by on_refresh
+        self._trash_tables: dict[tuple, StructureTableWidget] = {}
         self.layout = QVBoxLayout(self)
 
         # Header
@@ -47,6 +50,8 @@ class TrashTabWidget(QWidget):
 
     def on_refresh(self):
         """Clears the view and re-populates based on nested state['in_trash']."""
+        self._trash_tables.clear()
+
         # Clear existing widgets
         for i in reversed(range(self.container_layout.count())):
             widget = self.container_layout.takeAt(i).widget()
@@ -62,7 +67,6 @@ class TrashTabWidget(QWidget):
             data = self.controller.engine.fetch_chunk(chunk_id) or {}
 
             for comp_name, items in data.items():
-                # Filter for trashed items using the NEW schema path
                 trashed_items = [
                     (idx, item)
                     for idx, item in enumerate(items)
@@ -74,8 +78,9 @@ class TrashTabWidget(QWidget):
                     group = QGroupBox(f"Deleted from: {comp_name}")
                     g_layout = QVBoxLayout(group)
 
-                    # Create a table in 'trash mode' (shows Restore button)
                     table = StructureTableWidget(self, comp_name, is_trash_view=True)
+                    self._trash_tables[(chunk_id, comp_name)] = table
+
                     for original_idx, item in trashed_items:
                         table.add_row(item, original_idx)
 
@@ -97,42 +102,68 @@ class TrashTabWidget(QWidget):
             if comp_name in data and data_index < len(data[comp_name]):
                 del data[comp_name][data_index]
                 self.controller.engine.stage_update(chunk_name=chunk_id, data=data)
-                
-                main_view = self.window().findChild(QWidget, "StructureTabView")
-                if main_view:
-                    # Lightweight update for Trash view and badge
-                    main_view.refresh_trash_only()
+
+                table = self._trash_tables.get((chunk_id, comp_name))
+
+                def _do(t=table, di=data_index):
+                    if t:
+                        t.remove_row_by_index(di, reindex=True)
+                        if t.rowCount() == 0:
+                            self.on_refresh()
+                    else:
+                        self.on_refresh()
+                    main_view = self.window().findChild(QWidget, "StructureTabView")
+                    if main_view:
+                        main_view.update_trash_count()
+
+                QTimer.singleShot(0, _do)
                 return
 
     def toggle_trash_status(self, comp_name, data_index, should_trash):
         """
-        Restores an item by setting state['in_trash'] to False.
-        Then triggers a global refresh to update the Trash badge count.
+        Restores (should_trash=False) or re-trashes (should_trash=True) an item.
         """
         for chunk_id in self.chunks:
             data = self.controller.engine.fetch_chunk(chunk_id) or {}
 
             if comp_name in data and data_index < len(data[comp_name]):
-                # Update nested state
                 item = data[comp_name][data_index]
                 if "state" not in item:
                     item["state"] = {}
-
                 item["state"]["in_trash"] = should_trash
 
-                # Save to engine
                 self.controller.engine.stage_update(chunk_name=chunk_id, data=data)
 
-                # Find the main view to trigger a targeted sync
-                main_view = self.window().findChild(QWidget, "StructureTabView")
-                if main_view:
-                    if should_trash:
-                        # If we just trashed something, refresh the source tab and trash badge
-                        main_view.refresh_tab_by_chunk(chunk_id)
+                table = self._trash_tables.get((chunk_id, comp_name))
+                item_data = data[comp_name][data_index]
+
+                def _do(t=table, ci=chunk_id, cn=comp_name, di=data_index,
+                        st=should_trash, d=data, idata=item_data):
+                    if t:
+                        t.remove_row_by_index(di)
+                        if t.rowCount() == 0:
+                            self.on_refresh()
                     else:
-                        # If we restored something, refresh the source tab, trash view, and badge
-                        main_view.refresh_tab_by_chunk(chunk_id)
-                        main_view.refresh_trash_only()
+                        self.on_refresh()
+
+                    main_view = self.window().findChild(QWidget, "StructureTabView")
+                    if main_view:
+                        if not st:
+                            _CHUNK_TAB = {
+                                "str_foundation":     main_view.foundation_tab,
+                                "str_sub_structure":  main_view.substructure_tab,
+                                "str_super_structure": main_view.superstructure_tab,
+                                "str_misc":           main_view.misc_tab,
+                            }
+                            active_tab = _CHUNK_TAB.get(ci)
+                            section_table = active_tab.sections.get(cn) if active_tab else None
+                            if section_table:
+                                section_table.insert_row_at_position(idata, di)
+                                active_tab.data = d
+                                active_tab._update_summary()
+                            elif active_tab:
+                                main_view.refresh_tab_by_chunk(ci)
+                        main_view.update_trash_count()
+
+                QTimer.singleShot(0, _do)
                 return
-
-
