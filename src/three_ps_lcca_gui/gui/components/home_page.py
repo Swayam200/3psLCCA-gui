@@ -1183,6 +1183,7 @@ class HomePage(QWidget):
 
         self.grid_list.setViewMode(QListWidget.IconMode)
         self.grid_list.setResizeMode(QListWidget.Adjust)
+        self.grid_list.setMovement(QListWidget.Static)
         self.grid_list.setWrapping(True)
         self.grid_list.setSpacing(SP4)
 

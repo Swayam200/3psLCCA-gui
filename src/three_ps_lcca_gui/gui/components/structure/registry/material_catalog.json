@@ -1,7 +1,12 @@
 {
   "INDIA/Bihar/Darbhanga-2025": {
     "db_key": "INDIA/Bihar/Darbhanga-2025",
-    "path": "material_database\\INDIA\\Bihar\\Darbhanga-2025.json",
+    "path": [
+      "material_database",
+      "INDIA",
+      "Bihar",
+      "Darbhanga-2025.json"
+    ],
     "country": "INDIA",
     "region": "Bihar",
     "status": "OK",
@@ -123,13 +128,18 @@
     ],
     "file_meta": {
       "size_bytes": 189523,
-      "last_modified": "2026-03-21T03:44:11.209138",
+      "last_modified": "2026-04-17T17:55:35.633883",
       "md5": "4e9ed2b2619ecf07746ee7992b6d0fe4"
     }
   },
   "INDIA/Maharashtra/Mumbai-2023": {
     "db_key": "INDIA/Maharashtra/Mumbai-2023",
-    "path": "material_database\\INDIA\\Maharashtra\\Mumbai-2023.json",
+    "path": [
+      "material_database",
+      "INDIA",
+      "Maharashtra",
+      "Mumbai-2023.json"
+    ],
     "country": "INDIA",
     "region": "Maharashtra",
     "status": "OK",
@@ -207,13 +217,16 @@
     ],
     "file_meta": {
       "size_bytes": 185247,
-      "last_modified": "2026-03-21T03:44:27.541730",
+      "last_modified": "2026-04-17T17:55:35.641925",
       "md5": "72a9ac0cda04b678043d9e23e702d525"
     }
   },
   "_meta": {
-    "built_at": "2026-03-21T03:44:28.832800",
-    "root": "material_database",
+    "schema_version": 1,
+    "built_at": "2026-05-20T14:05:05.509477",
+    "root": [
+      "material_database"
+    ],
     "total_files": 2,
     "ok": 2,
     "failed": 0

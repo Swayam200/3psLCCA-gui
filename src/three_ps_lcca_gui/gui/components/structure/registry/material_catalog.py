@@ -38,6 +38,9 @@ from pathlib import Path
 #  CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Increment when the manifest JSON structure changes incompatibly
+SCHEMA_VERSION = 1
+
 # Root folder that contains <COUNTRY>/<REGION>/ sub-trees
 MATERIAL_DB_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "material_database")
@@ -61,6 +64,18 @@ EXPECTED_SCHEMA = {
 # ─────────────────────────────────────────────────────────────────────────────
 #  PRIVATE HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _serialize_path(path: Path) -> list[str]:
+    """Convert a Path to a list of parts for OS-agnostic JSON storage."""
+    return list(path.parts)
+
+
+def _deserialize_path(val) -> Path:
+    """Reconstruct a Path from a stored list of parts (or a legacy string)."""
+    if isinstance(val, list):
+        return Path(*val)
+    return Path(val)
+
 
 def _md5(file_path: str) -> str:
     h = hashlib.md5()
@@ -221,7 +236,7 @@ def check_integrity(db_key: str) -> dict:
             "checked_at": datetime.datetime.now().isoformat(),
         }
     entry    = registry[db_key]
-    abs_path = str((Path(CATALOG_MANIFEST_PATH).parent / entry["path"]).resolve())
+    abs_path = str((Path(CATALOG_MANIFEST_PATH).parent / _deserialize_path(entry["path"])).resolve())
     report   = check_integrity_by_path(abs_path)
     report["db_key"]  = db_key
     report["country"] = entry.get("country")
@@ -242,10 +257,10 @@ def build_registry(root: str = MATERIAL_DB_ROOT,
     Manifest structure
     ------------------
     {
-      "_meta": { "built_at": "...", "root": "...", "total": N, "ok": N, "failed": N },
+      "_meta": { "schema_version": 1, "built_at": "...", "root": [...], "total": N, "ok": N, "failed": N },
       "INDIA/Maharashtra/PWD/PWD_SOR": {
           "db_key":   "INDIA/Maharashtra/PWD/PWD_SOR",
-          "path":     "/abs/path/to/MumbaiSOR.json",
+          "path":     ["material_database", "INDIA", "Maharashtra", "PWD", "PWD_SOR.json"],
           "country":  "INDIA",
           "region":   "Maharashtra",
           "status":   "OK" | "FAILED",
@@ -286,7 +301,7 @@ def build_registry(root: str = MATERIAL_DB_ROOT,
                 pass
 
         manifest_dir = Path(manifest_path).parent
-        rel_path = str(jf.relative_to(manifest_dir))
+        rel_path = _serialize_path(jf.relative_to(manifest_dir))
 
         manifest[db_key] = {
             "db_key":       db_key,
@@ -307,11 +322,12 @@ def build_registry(root: str = MATERIAL_DB_ROOT,
 
     manifest_dir = Path(manifest_path).parent
     manifest["_meta"] = {
-        "built_at":    datetime.datetime.now().isoformat(),
-        "root":        str(Path(root).relative_to(manifest_dir)),
-        "total_files": len(json_files),
-        "ok":          ok_count,
-        "failed":      failed_count,
+        "schema_version": SCHEMA_VERSION,
+        "built_at":       datetime.datetime.now().isoformat(),
+        "root":           _serialize_path(Path(root).relative_to(manifest_dir)),
+        "total_files":    len(json_files),
+        "ok":             ok_count,
+        "failed":         failed_count,
     }
 
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -330,14 +346,24 @@ def build_registry(root: str = MATERIAL_DB_ROOT,
 def get_registry(manifest_path: str = CATALOG_MANIFEST_PATH) -> dict:
     """
     Load and return the registry manifest (minus the _meta key).
-    Auto-builds the registry if the manifest file does not exist.
+    Auto-builds if the manifest is missing or on a schema version mismatch.
     """
     if not os.path.isfile(manifest_path):
         print("[material_catalog] Manifest not found – building now …")
-        build_registry()
+        build_registry(manifest_path=manifest_path)
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         full = json.load(f)
+
+    stored_version = full.get("_meta", {}).get("schema_version")
+    if stored_version != SCHEMA_VERSION:
+        print(
+            f"[material_catalog] Schema version mismatch "
+            f"(manifest={stored_version}, current={SCHEMA_VERSION}) – rebuilding …"
+        )
+        build_registry(manifest_path=manifest_path)
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            full = json.load(f)
 
     return {k: v for k, v in full.items() if k != "_meta"}
 
@@ -348,7 +374,7 @@ def get_path(db_key: str, manifest_path: str = CATALOG_MANIFEST_PATH) -> str:
     if db_key not in registry:
         raise KeyError(f"'{db_key}' not in registry. "
                        f"Available: {list(registry.keys())}")
-    rel_path = registry[db_key]["path"]
+    rel_path = _deserialize_path(registry[db_key]["path"])
     abs_path = str((Path(manifest_path).parent / rel_path).resolve())
     if not os.path.isfile(abs_path):
         raise FileNotFoundError(f"File for '{db_key}' missing on disk: {abs_path}")
